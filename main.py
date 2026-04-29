@@ -23,7 +23,7 @@ S3_BUCKET = os.environ["S3_BUCKET"]
 S3_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 THINGS_LLM_URL = "https://things.cisco.com/api/services/llm/chat"
-THINGS_WEBEX_URL = "https://things.cisco.com/api/services/webex/message"
+WEBEX_BOT_TOKEN = os.environ["WEBEX_BOT_TOKEN"]
 
 s3 = boto3.client("s3", region_name=S3_REGION)
 
@@ -94,17 +94,21 @@ def _clean_with_llm(raw_text: str, url: str) -> str:
         ],
         "max_tokens": 2048,
     }
-    resp = requests.post(
-        THINGS_LLM_URL,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {THINGS_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()["content"]
+    try:
+        resp = requests.post(
+            THINGS_LLM_URL,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {THINGS_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()["content"]
+    except Exception as e:
+        app.logger.warning("LLM clean failed, returning raw text: %s", e)
+        return raw_text
 
 
 def _require_app_token():
@@ -114,8 +118,6 @@ def _require_app_token():
 
 @app.route("/health")
 def health():
-    if not _require_app_token():
-        return jsonify({"error": "unauthorized"}), 401
     return jsonify({"status": "ok"})
 
 
@@ -162,16 +164,16 @@ def _upload_and_presign(zip_bytes: bytes) -> str:
 
 
 def _send_webex_message(room_id: str, text: str, file_url: str | None = None):
-    """Send an outbound Webex message via Things API."""
-    payload: dict = {"room_id": room_id, "markdown": text}
+    """Send an outbound Webex message via public Webex API."""
+    payload: dict = {"roomId": room_id, "markdown": text}
     if file_url:
         payload["files"] = [file_url]
     try:
         requests.post(
-            THINGS_WEBEX_URL,
+            "https://webexapis.com/v1/messages",
             json=payload,
             headers={
-                "Authorization": f"Bearer {THINGS_API_KEY}",
+                "Authorization": f"Bearer {WEBEX_BOT_TOKEN}",
                 "Content-Type": "application/json",
             },
             timeout=15,
